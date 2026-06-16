@@ -521,7 +521,7 @@ window.addEventListener('DOMContentLoaded', () => {
 // ── Fetch existing summaries from DB (no pipeline trigger) ──
 async function fetchSummaries() {
   try {
-    const res = await fetch(`${RAILWAY_URL}/crypto/summaries`);
+    const res = await fetch(`${RAILWAY_URL}/api/summaries`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.success && data.summaries && data.summaries.length > 0) {
@@ -562,13 +562,13 @@ async function triggerRefresh() {
   content.style.pointerEvents = 'none';
 
   try {
-    const res = await fetch(`${RAILWAY_URL}/crypto/trigger`, { method: 'POST' });
+    const res = await fetch(`${RAILWAY_URL}/api/trigger`, { method: 'POST' });
     if (!res.ok) throw new Error(`Server error: ${res.status}`);
     const data = await res.json();
 
     if (data.success) {
       // Fetch fresh summaries from DB
-      const sumRes = await fetch(`${RAILWAY_URL}/crypto/summaries`);
+      const sumRes = await fetch(`${RAILWAY_URL}/api/summaries`);
       const sumData = await sumRes.json();
       if (sumData.success && sumData.summaries.length > 0) {
         renderCards(sumData.summaries);
