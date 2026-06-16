@@ -561,20 +561,70 @@ async function triggerRefresh() {
   content.style.opacity = '0.3';
   content.style.pointerEvents = 'none';
 
-  try {
-    const res = await fetch(`${RAILWAY_URL}/api/trigger`, { method: 'POST' });
-    if (!res.ok) throw new Error(`Server error: ${res.status}`);
-    const data = await res.json();
+  // Helper: fetch with a timeout
+  async function fetchWithTimeout(url, opts = {}, timeoutMs = 120000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...opts, signal: controller.signal });
+      return res;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
-    if (data.success) {
-      // Fetch fresh summaries from DB
-      const sumRes = await fetch(`${RAILWAY_URL}/api/summaries`);
-      const sumData = await sumRes.json();
-      if (sumData.success && sumData.summaries.length > 0) {
-        renderCards(sumData.summaries);
+  // Helper: poll summaries until they appear or we give up
+  async function pollSummaries(maxTries = 12, delayMs = 6000) {
+    for (let i = 0; i < maxTries; i++) {
+      try {
+        const r = await fetchWithTimeout(`${RAILWAY_URL}/api/summaries`, {}, 20000);
+        const d = await r.json();
+        if (d.success && d.summaries && d.summaries.length > 0) return d.summaries;
+      } catch (e) { /* keep polling */ }
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+    return null;
+  }
+
+  try {
+    // 1. Wake the server (free tier sleeps). Don't care about the result.
+    triggerMsg.textContent = 'Waking the server…';
+    try { await fetchWithTimeout(`${RAILWAY_URL}/api/health`, {}, 60000); } catch (e) {}
+
+    // 2. Fire the pipeline. The server keeps running even if this connection
+    //    drops on mobile, so we treat a dropped connection as "keep going".
+    triggerMsg.textContent = 'Fetching latest videos from YouTube…';
+    let triggerOk = false;
+    try {
+      const res = await fetchWithTimeout(`${RAILWAY_URL}/api/trigger`, { method: 'POST' }, 150000);
+      if (res.ok) {
+        const data = await res.json();
+        triggerOk = !!data.success;
       }
+    } catch (e) {
+      // Connection dropped (common on mobile for long requests) — the server
+      // is still processing, so fall through to polling for results.
+      triggerMsg.textContent = 'Still working on the server… fetching results…';
+    }
+
+    // 3. Get the results — either right away, or by polling if the trigger
+    //    connection dropped while the server kept working.
+    let summaries = null;
+    try {
+      const sumRes = await fetchWithTimeout(`${RAILWAY_URL}/api/summaries`, {}, 20000);
+      const sumData = await sumRes.json();
+      if (sumData.success && sumData.summaries.length > 0) summaries = sumData.summaries;
+    } catch (e) {}
+
+    if (!summaries) {
+      triggerMsg.textContent = 'Almost there… gathering summaries…';
+      summaries = await pollSummaries();
+    }
+
+    if (summaries && summaries.length > 0) {
+      renderCards(summaries);
     } else {
-      showError('Pipeline returned an error. Check Railway logs.');
+      showError('The server ran but no summaries came back yet. Wait a moment and press Refresh again.');
     }
   } catch (e) {
     showError(`Could not reach the server: ${e.message}`);
