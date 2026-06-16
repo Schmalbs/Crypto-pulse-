@@ -79,51 +79,74 @@ async function getLatestVideoId(channelId) {
   return { videoId, videoTitle };
 }
 
-// ── Fetch transcript via YouTubeTranscript API (no key needed) ──
+// ── Fetch transcript via Supadata API (works from server IPs) ──
 async function getTranscript(videoId) {
-  // Uses the public timedtext endpoint — works for auto-generated and manual captions
-  const listUrl = `https://www.youtube.com/api/timedtext?type=list&v=${videoId}`;
-  const listRes = await fetch(listUrl);
-  const listXml = await listRes.text();
+  const key = process.env.SUPADATA_API_KEY;
+  if (!key) throw new Error('SUPADATA_API_KEY not set');
 
-  // Try English first, fall back to first available
-  let langCode = 'en';
-  const langMatch = listXml.match(/lang_code="([^"]+)"/);
-  if (langMatch) langCode = langMatch[1];
+  const url = `https://api.supadata.ai/v1/youtube/transcript?videoId=${videoId}&text=true`;
+  const res = await fetch(url, { headers: { 'x-api-key': key } });
 
-  const transcriptUrl = `https://www.youtube.com/api/timedtext?lang=${langCode}&v=${videoId}&fmt=json3`;
-  const transcriptRes = await fetch(transcriptUrl);
-
-  if (!transcriptRes.ok) {
-    // Fallback: try youtubetranscript.com mirror
-    const fallbackRes = await fetch(`https://youtubetranscript.com/?server_vid=${videoId}`);
-    if (!fallbackRes.ok) throw new Error(`No transcript available for ${videoId}`);
-    const fallbackText = await fallbackRes.text();
-    // Strip HTML tags from response
-    return fallbackText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 12000);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Supadata ${res.status}: ${body.slice(0, 120)}`);
   }
 
-  const json = await transcriptRes.json();
-  if (!json.events) throw new Error('Empty transcript');
+  const data = await res.json();
+  // Supadata returns { content: "..." } when text=true, or segments otherwise
+  let text = '';
+  if (typeof data.content === 'string') {
+    text = data.content;
+  } else if (Array.isArray(data.content)) {
+    text = data.content.map(s => s.text || '').join(' ');
+  } else if (Array.isArray(data.transcript)) {
+    text = data.transcript.map(s => s.text || '').join(' ');
+  }
 
-  // Flatten transcript events into plain text
-  const text = json.events
-    .filter(e => e.segs)
-    .map(e => e.segs.map(s => s.utf8 || '').join(''))
-    .join(' ')
-    .replace(/\n/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
+  text = text.replace(/\s+/g, ' ').trim();
+  if (!text) throw new Error('Supadata returned empty transcript');
   return text.slice(0, 12000); // cap to ~3k tokens
 }
 
-// ── Web search sentiment for non-channel analysts ──
-async function getWebSentiment(analyst) {
-  // We ask Claude to reason based on what it knows + search context
-  // Since we don't have a live search API wired here, we prompt Claude
-  // to summarise based on recent known activity for the analyst
-  return `Recent web search sentiment for ${analyst.name} — searched: ${analyst.searchTerms.join(', ')}`;
+// ── Web search sentiment via Claude's web_search tool ──
+// Works for ALL analysts (YouTube transcripts get blocked from server IPs,
+// so we search the web for each analyst's latest views instead).
+async function getWebSentiment(analyst, searchHints) {
+  const hints = searchHints && searchHints.length
+    ? searchHints.join(', ')
+    : analyst;
+
+  const prompt = `Search the web for the most recent crypto/Bitcoin market outlook from the analyst "${analyst}". Search terms to try: ${hints}.
+
+Find their latest videos, posts, or interviews (prioritise the last 7 days). Then summarise:
+1. A concise 3-5 sentence summary of their current market views, in your own words (paraphrase, never quote).
+2. Their overall sentiment: bullish, bearish, or neutral.
+3. A sentiment score 1-10 (1=extremely bearish, 5=neutral, 10=extremely bullish).
+4. Up to 4 key points. IMPORTANT: if they mention any specific TRADE IDEAS or setups (e.g. entries, targets, levels they're watching, longs/shorts, accumulation zones), call those out explicitly in the key points and in the summary.
+
+Note how fresh the information is (e.g. "from a video 2 days ago" vs "last clear view ~2 weeks ago").
+
+Respond ONLY with valid JSON, no markdown fences:
+{"summary":"...","sentiment":"bullish|bearish|neutral","sentiment_score":5,"key_points":["...","..."]}`;
+
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1500,
+    messages: [{ role: 'user', content: prompt }],
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }]
+  });
+
+  // Concatenate all text blocks (web search responses interleave tool calls + text)
+  const raw = (response.content || [])
+    .map(b => b.type === 'text' ? b.text : '')
+    .join('')
+    .trim();
+
+  const clean = raw.replace(/```json|```/g, '').trim();
+  // Extract the JSON object even if there's surrounding prose
+  const jsonMatch = clean.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('No JSON in web search response');
+  return JSON.parse(jsonMatch[0]);
 }
 
 // ── Ask Claude to summarise + classify sentiment ──
@@ -169,19 +192,63 @@ async function storeResult({ channelName, handle, summary, sentiment, sentimentS
   );
 }
 
+// ── Summarise a real transcript (captures trade ideas) ──
+async function summariseTranscript(channelName, transcript) {
+  const systemPrompt = `You are a crypto market analyst assistant. Read this YouTube video transcript from a crypto analyst and extract:
+1. A concise 3-5 sentence summary of their key market views (paraphrase, never quote).
+2. Their overall sentiment: bullish, bearish, or neutral.
+3. A sentiment score 1-10 (1=extremely bearish, 5=neutral, 10=extremely bullish).
+4. Up to 4 key points. IMPORTANT: if they mention any specific TRADE IDEAS or setups (entries, targets, levels they're watching, longs/shorts, accumulation zones), call those out explicitly.
+
+Respond ONLY with valid JSON, no markdown fences:
+{"summary":"...","sentiment":"bullish|bearish|neutral","sentiment_score":5,"key_points":["...","..."]}`;
+
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1000,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: `Analyst: ${channelName}\n\nVideo transcript:\n${transcript}` }]
+  });
+
+  const raw = response.content[0].text.trim();
+  const clean = raw.replace(/```json|```/g, '').trim();
+  const jsonMatch = clean.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('No JSON in transcript summary');
+  return JSON.parse(jsonMatch[0]);
+}
+
 // ── Main pipeline ──
 async function runPipeline() {
   const results = [];
   const errors = [];
 
-  // Process YouTube channels
+  // YouTube analysts: real transcript first, web search as fallback.
   for (const channel of YOUTUBE_CHANNELS) {
     try {
       console.log(`Processing ${channel.name}...`);
-      const { videoId, videoTitle } = await getLatestVideoId(channel.channelId);
-      const videoUrl = `https://youtube.com/watch?v=${videoId}`;
-      const transcript = await getTranscript(videoId);
-      const analysis = await summariseWithClaude(channel.name, transcript);
+      let analysis, videoTitle, videoUrl, source;
+
+      try {
+        // 1. Get latest video, 2. fetch real transcript, 3. summarise
+        const latest = await getLatestVideoId(channel.channelId);
+        const transcript = await getTranscript(latest.videoId);
+        analysis = await summariseTranscript(channel.name, transcript);
+        videoTitle = latest.videoTitle;
+        videoUrl = `https://youtube.com/watch?v=${latest.videoId}`;
+        source = 'transcript';
+      } catch (transcriptErr) {
+        // Fallback: web search (so the analyst never comes back empty)
+        console.warn(`  ↳ transcript failed (${transcriptErr.message}), falling back to web search`);
+        const searchHints = [
+          `${channel.name} crypto latest video`,
+          `${channel.name} Bitcoin outlook`,
+          `${channel.name} ${channel.handle}`
+        ];
+        analysis = await getWebSentiment(channel.name, searchHints);
+        videoTitle = 'Latest views (web fallback)';
+        videoUrl = `https://youtube.com/@${channel.handle}`;
+        source = 'web';
+      }
 
       await storeResult({
         channelName: channel.name,
@@ -195,19 +262,18 @@ async function runPipeline() {
       });
 
       results.push({ channel: channel.name, sentiment: analysis.sentiment, score: analysis.sentiment_score });
-      console.log(`✓ ${channel.name}: ${analysis.sentiment} (${analysis.sentiment_score}/10)`);
+      console.log(`✓ ${channel.name}: ${analysis.sentiment} (${analysis.sentiment_score}/10) [${source}]`);
     } catch (err) {
       console.error(`✗ ${channel.name}: ${err.message}`);
       errors.push({ channel: channel.name, error: err.message });
     }
   }
 
-  // Process web-search-only analysts
+  // Web-search-only analysts (e.g. Kyle Stagoll / Trader Daxx)
   for (const analyst of WEB_SEARCH_ANALYSTS) {
     try {
       console.log(`Processing ${analyst.name} (web)...`);
-      const context = await getWebSentiment(analyst);
-      const analysis = await summariseWithClaude(analyst.name, context, true);
+      const analysis = await getWebSentiment(analyst.name, analyst.searchTerms);
 
       await storeResult({
         channelName: analyst.name,
