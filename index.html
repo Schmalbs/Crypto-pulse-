@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crypto Pulse — Analyst Sentiment</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #080C14;
+    --surface:   #0F1724;
+    --surface2:  #16202E;
+    --border:    #1E2D42;
+    --bull:      #00E5A0;
+    --bull-dim:  #00E5A018;
+    --bear:      #FF3D6B;
+    --bear-dim:  #FF3D6B18;
+    --idea:      #F5A623;
+    --idea-dim:  #F5A62318;
+    --neutral:   #6B8CAE;
+    --neutral-dim: #6B8CAE18;
+    --text:      #E2EAF4;
+    --text-muted:#5C7A96;
+    --text-dim:  #3A556E;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* ── HEADER ── */
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(8, 12, 20, 0.95);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 28px;
+    gap: 16px;
+  }
+
+  .wordmark {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    white-space: nowrap;
+  }
+
+  .wordmark-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--bull);
+    box-shadow: 0 0 10px var(--bull);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 10px var(--bull); }
+    50% { opacity: 0.5; box-shadow: 0 0 4px var(--bull); }
+  }
+
+  .header-meta {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-shrink: 0;
+  }
+
+  .last-updated {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: 'Space Grotesk', sans-serif;
+  }
+
+  /* ── REFRESH BUTTON ── */
+  .btn-refresh {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 18px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .btn-refresh:hover:not(:disabled) {
+    border-color: var(--bull);
+    color: var(--bull);
+  }
+  .btn-refresh:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-refresh .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    display: none;
+    animation: spin 0.8s linear infinite;
+  }
+  .btn-refresh.loading .spinner { display: block; }
+  .btn-refresh.loading .btn-label { display: none; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── CONSENSUS BAR — the signature element ── */
+  .consensus-strip {
+    padding: 12px 28px;
+    border-top: 1px solid var(--border);
+  }
+
+  .consensus-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .consensus-label {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .consensus-reading {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .bar-track {
+    height: 6px;
+    background: var(--surface2);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 1s ease, background 1s ease;
+    background: var(--bull);
+  }
+
+  .bar-fill.bearish { background: var(--bear); }
+  .bar-fill.neutral { background: var(--neutral); }
+
+  /* ── MAIN CONTENT ── */
+  main {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 32px 28px 60px;
+  }
+
+  /* ── ERROR / EMPTY STATES ── */
+  .state-msg {
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--text-muted);
+    font-family: 'Space Grotesk', sans-serif;
+  }
+  .state-msg h2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: var(--text);
+  }
+  .state-msg p { font-size: 14px; line-height: 1.7; max-width: 420px; margin: 0 auto; }
+
+  /* ── GRID ── */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 20px;
+  }
+
+  /* ── CARD ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+  .card:hover {
+    transform: translateY(-2px);
+    border-color: var(--text-dim);
+  }
+
+  .card-header {
+    padding: 18px 20px 14px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .analyst-name {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+
+  .analyst-handle {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 3px;
+    font-family: 'Space Grotesk', sans-serif;
+  }
+
+  /* sentiment pill */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .pill.bullish { background: var(--bull-dim); color: var(--bull); border: 1px solid var(--bull)44; }
+  .pill.bearish  { background: var(--bear-dim);  color: var(--bear);  border: 1px solid var(--bear)44; }
+  .pill.neutral  { background: var(--neutral-dim); color: var(--neutral); border: 1px solid var(--neutral)44; }
+
+  .pill-dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: currentColor;
+  }
+
+  /* score bar inside card */
+  .score-bar {
+    height: 3px;
+    background: var(--border);
+    position: relative;
+  }
+  .score-bar-fill {
+    height: 100%;
+    transition: width 0.8s ease;
+  }
+  .score-bar-fill.bullish { background: var(--bull); }
+  .score-bar-fill.bearish { background: var(--bear); }
+  .score-bar-fill.neutral { background: var(--neutral); }
+
+  /* card body */
+  .card-body {
+    padding: 16px 20px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .video-link {
+    font-size: 12px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    text-decoration: none;
+    transition: color 0.15s;
+    line-height: 1.4;
+  }
+  .video-link:hover { color: var(--text); }
+  .video-link svg { flex-shrink: 0; }
+
+  .summary-text {
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+
+  /* trade idea callout */
+  .trade-idea {
+    background: var(--idea-dim);
+    border: 1px solid var(--idea)33;
+    border-left: 3px solid var(--idea);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+
+  .trade-idea-label {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--idea);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .trade-idea-text {
+    font-size: 13px;
+    line-height: 1.6;
+    color: #E2C97E;
+  }
+
+  /* key points */
+  .key-points {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .key-point {
+    font-size: 13px;
+    color: var(--text-muted);
+    display: flex;
+    gap: 8px;
+    line-height: 1.5;
+  }
+
+  .key-point::before {
+    content: '—';
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  /* card footer */
+  .card-footer {
+    padding: 10px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .score-label {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .score-value {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .score-value.bullish { color: var(--bull); }
+  .score-value.bearish { color: var(--bear); }
+  .score-value.neutral { color: var(--neutral); }
+
+  .fetched-time {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: 'Space Grotesk', sans-serif;
+  }
+
+  /* ── SKELETON loading ── */
+  .skeleton-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 20px;
+  }
+  .skeleton-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    height: 280px;
+    position: relative;
+  }
+  .skeleton-card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, #1E2D4233 50%, transparent 100%);
+    animation: shimmer 1.6s ease-in-out infinite;
+    background-size: 200% 100%;
+  }
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  /* ── PROGRESS message during trigger ── */
+  .trigger-status {
+    text-align: center;
+    padding: 60px 20px;
+    display: none;
+  }
+  .trigger-status.visible { display: block; }
+
+  .trigger-spinner {
+    width: 36px; height: 36px;
+    border: 3px solid var(--border);
+    border-top-color: var(--bull);
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+    margin: 0 auto 20px;
+  }
+
+  .trigger-msg {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 15px;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+
+  .trigger-sub {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 600px) {
+    .header-top { padding: 12px 16px; }
+    .consensus-strip { padding: 10px 16px; }
+    main { padding: 20px 16px 48px; }
+    .grid, .skeleton-grid { grid-template-columns: 1fr; }
+    .wordmark { font-size: 15px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-top">
+    <div class="wordmark">
+      <div class="wordmark-dot"></div>
+      Crypto Pulse
+    </div>
+    <div class="header-meta">
+      <span class="last-updated" id="lastUpdated">No data yet</span>
+      <button class="btn-refresh" id="btnRefresh" onclick="triggerRefresh()">
+        <div class="spinner"></div>
+        <span class="btn-label">↻ Refresh Analysts</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="consensus-strip">
+    <div class="consensus-label-row">
+      <span class="consensus-label">Market Consensus</span>
+      <span class="consensus-reading" id="consensusReading">—</span>
+    </div>
+    <div class="bar-track">
+      <div class="bar-fill" id="consensusBar" style="width: 0%"></div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- Trigger progress -->
+  <div class="trigger-status" id="triggerStatus">
+    <div class="trigger-spinner"></div>
+    <div class="trigger-msg" id="triggerMsg">Fetching analyst content…</div>
+    <div class="trigger-sub">This takes 30–60 seconds. Hang tight.</div>
+  </div>
+
+  <!-- Content -->
+  <div id="content">
+    <div class="state-msg" id="emptyState">
+      <h2>No data yet</h2>
+      <p>Press <strong>Refresh Analysts</strong> to fetch the latest content from YouTube and summarise each analyst's market sentiment.</p>
+    </div>
+  </div>
+</main>
+
+<script>
+// ── CONFIG — replace with your Railway URL ──
+const RAILWAY_URL = 'https://crypto-pulse-agyd.onrender.com';
+
+// ── State ──
+let currentSummaries = [];
+
+// ── On load: fetch whatever is already in the DB ──
+window.addEventListener('DOMContentLoaded', () => {
+  fetchSummaries();
+});
+
+// ── Fetch existing summaries from DB (no pipeline trigger) ──
+async function fetchSummaries() {
+  try {
+    const res = await fetch(`${RAILWAY_URL}/crypto/summaries`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.success && data.summaries && data.summaries.length > 0) {
+      renderCards(data.summaries);
+    }
+  } catch (e) {
+    console.warn('Could not fetch summaries:', e.message);
+  }
+}
+
+// ── Button: trigger pipeline then render results ──
+async function triggerRefresh() {
+  const btn = document.getElementById('btnRefresh');
+  const triggerStatus = document.getElementById('triggerStatus');
+  const content = document.getElementById('content');
+  const triggerMsg = document.getElementById('triggerMsg');
+
+  btn.disabled = true;
+  btn.classList.add('loading');
+  triggerStatus.classList.add('visible');
+
+  // Animate the status messages
+  const messages = [
+    'Fetching latest videos from YouTube…',
+    'Pulling transcripts…',
+    'Asking Claude to summarise each analyst…',
+    'Processing sentiment scores…',
+    'Almost done…',
+  ];
+  let msgIdx = 0;
+  const msgTimer = setInterval(() => {
+    msgIdx = (msgIdx + 1) % messages.length;
+    triggerMsg.textContent = messages[msgIdx];
+  }, 8000);
+
+  // Hide existing cards while loading
+  content.style.opacity = '0.3';
+  content.style.pointerEvents = 'none';
+
+  try {
+    const res = await fetch(`${RAILWAY_URL}/crypto/trigger`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Server error: ${res.status}`);
+    const data = await res.json();
+
+    if (data.success) {
+      // Fetch fresh summaries from DB
+      const sumRes = await fetch(`${RAILWAY_URL}/crypto/summaries`);
+      const sumData = await sumRes.json();
+      if (sumData.success && sumData.summaries.length > 0) {
+        renderCards(sumData.summaries);
+      }
+    } else {
+      showError('Pipeline returned an error. Check Railway logs.');
+    }
+  } catch (e) {
+    showError(`Could not reach the server: ${e.message}`);
+  } finally {
+    clearInterval(msgTimer);
+    btn.disabled = false;
+    btn.classList.remove('loading');
+    triggerStatus.classList.remove('visible');
+    content.style.opacity = '';
+    content.style.pointerEvents = '';
+  }
+}
+
+// ── Render all cards ──
+function renderCards(summaries) {
+  currentSummaries = summaries;
+  const content = document.getElementById('content');
+  const lastUpdated = document.getElementById('lastUpdated');
+
+  if (!summaries || summaries.length === 0) {
+    content.innerHTML = `
+      <div class="state-msg">
+        <h2>No data yet</h2>
+        <p>Press <strong>Refresh Analysts</strong> to fetch the latest content.</p>
+      </div>`;
+    return;
+  }
+
+  // Update consensus bar
+  updateConsensus(summaries);
+
+  // Most recent fetch time
+  const latestFetch = summaries.reduce((a, b) =>
+    new Date(a.fetched_at) > new Date(b.fetched_at) ? a : b);
+  lastUpdated.textContent = 'Updated ' + timeAgo(latestFetch.fetched_at);
+
+  // Build grid
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  summaries.forEach(s => grid.appendChild(buildCard(s)));
+  content.innerHTML = '';
+  content.appendChild(grid);
+}
+
+// ── Build a single analyst card ──
+function buildCard(s) {
+  const sentiment = (s.sentiment || 'neutral').toLowerCase();
+  const score = parseInt(s.sentiment_score) || 5;
+  const scorePct = ((score - 1) / 9 * 100).toFixed(0);
+  const keyPoints = Array.isArray(s.key_points)
+    ? s.key_points
+    : (typeof s.key_points === 'string' ? JSON.parse(s.key_points || '[]') : []);
+
+  // Detect if summary or key points mention a trade idea
+  const tradeKeywords = /trade idea|trade setup|entering|taking a position|long|short|buying|selling|target|stop loss|entry|risk\/reward|r:r|playing|position|watching for entry|looking to buy|looking to sell|set up|breakout play|dca|accumulate/i;
+  const allText = [s.summary || '', ...(keyPoints || [])].join(' ');
+  const hasTradeIdea = tradeKeywords.test(allText);
+  const tradeIdeaText = extractTradeIdea(s.summary || '', keyPoints || []);
+
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  // Video URL — only show if it's a real YouTube link
+  const isYouTube = s.video_url && s.video_url.includes('youtube');
+  const videoBlock = isYouTube ? `
+    <a class="video-link" href="${s.video_url}" target="_blank" rel="noopener">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+      </svg>
+      ${escHtml(s.video_title || 'Latest video')}
+    </a>` : `
+    <span class="video-link">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      ${escHtml(s.video_title || 'Web search summary')}
+    </span>`;
+
+  // Trade idea callout
+  const tradeBlock = (hasTradeIdea && tradeIdeaText) ? `
+    <div class="trade-idea">
+      <div class="trade-idea-label">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="1" x2="12" y2="23"></line>
+          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+        </svg>
+        Trade Idea
+      </div>
+      <div class="trade-idea-text">${escHtml(tradeIdeaText)}</div>
+    </div>` : '';
+
+  // Key points (show max 3, skip if they're already captured as trade idea)
+  const pointsHtml = keyPoints.slice(0, 3).map(pt =>
+    `<div class="key-point">${escHtml(pt)}</div>`).join('');
+
+  card.innerHTML = `
+    <div class="card-header">
+      <div>
+        <div class="analyst-name">${escHtml(s.channel_name)}</div>
+        ${s.channel_handle ? `<div class="analyst-handle">@${escHtml(s.channel_handle)}</div>` : ''}
+      </div>
+      <div class="pill ${sentiment}">
+        <div class="pill-dot"></div>
+        ${sentiment}
+      </div>
+    </div>
+    <div class="score-bar">
+      <div class="score-bar-fill ${sentiment}" style="width: ${scorePct}%"></div>
+    </div>
+    <div class="card-body">
+      ${videoBlock}
+      <div class="summary-text">${escHtml(s.summary || '')}</div>
+      ${tradeBlock}
+      ${pointsHtml ? `<div class="key-points">${pointsHtml}</div>` : ''}
+    </div>
+    <div class="card-footer">
+      <div>
+        <span class="score-label">Sentiment score </span>
+        <span class="score-value ${sentiment}">${score}/10</span>
+      </div>
+      <span class="fetched-time">${timeAgo(s.fetched_at)}</span>
+    </div>`;
+
+  return card;
+}
+
+// ── Extract trade idea sentences from summary + key points ──
+function extractTradeIdea(summary, keyPoints) {
+  const tradeRe = /trade idea|trade setup|entering|taking a position|long(?:ing)?|short(?:ing)?|buying|selling|target|stop.?loss|entry|risk.{1,5}reward|r:r|playing a|position|watching for entry|looking to (buy|sell)|set up|breakout play|dca|accumulate/i;
+  // Check key points first (more likely to be specific)
+  for (const pt of keyPoints) {
+    if (tradeRe.test(pt)) return pt;
+  }
+  // Fall back to matching sentences in summary
+  const sentences = summary.split(/(?<=[.!?])\s+/);
+  const match = sentences.find(s => tradeRe.test(s));
+  return match || null;
+}
+
+// ── Consensus bar ──
+function updateConsensus(summaries) {
+  const bar = document.getElementById('consensusBar');
+  const reading = document.getElementById('consensusReading');
+  if (!summaries.length) return;
+
+  const avg = summaries.reduce((a, s) => a + (parseInt(s.sentiment_score) || 5), 0) / summaries.length;
+  const pct = ((avg - 1) / 9 * 100).toFixed(0);
+
+  let label, cls;
+  if (avg >= 7) { label = `Broadly Bullish — ${avg.toFixed(1)}/10`; cls = 'bullish'; }
+  else if (avg >= 5.5) { label = `Cautiously Bullish — ${avg.toFixed(1)}/10`; cls = 'bullish'; }
+  else if (avg >= 4.5) { label = `Mixed / Neutral — ${avg.toFixed(1)}/10`; cls = 'neutral'; }
+  else if (avg >= 3) { label = `Cautiously Bearish — ${avg.toFixed(1)}/10`; cls = 'bearish'; }
+  else { label = `Broadly Bearish — ${avg.toFixed(1)}/10`; cls = 'bearish'; }
+
+  bar.style.width = pct + '%';
+  bar.className = 'bar-fill ' + cls;
+  reading.textContent = label;
+  reading.style.color = cls === 'bullish' ? 'var(--bull)' : cls === 'bearish' ? 'var(--bear)' : 'var(--neutral)';
+}
+
+// ── Show error in content area ──
+function showError(msg) {
+  document.getElementById('content').innerHTML = `
+    <div class="state-msg">
+      <h2>Something went wrong</h2>
+      <p>${escHtml(msg)}</p>
+    </div>`;
+}
+
+// ── Helpers ──
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function timeAgo(iso) {
+  if (!iso) return '';
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+</script>
+</body>
+</html>
